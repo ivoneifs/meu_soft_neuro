@@ -1,0 +1,5 @@
+{
+  "name": "Neuro-Interface",
+  "description": "A sleek, modern neuropsychological software interface for managing patients, assessments, and generating AI-powered reports. It features a dashboard with real-time analytics, detailed patient files, and customizable settings.",
+  "requestFramePermissions": []
+}
