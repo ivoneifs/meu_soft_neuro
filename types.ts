@@ -5,7 +5,7 @@ export interface AppliedTest {
 }
 
 export interface Patient {
-  id: number;
+  id: string;
   userId?: string;
   name: string;
   avatar: string;

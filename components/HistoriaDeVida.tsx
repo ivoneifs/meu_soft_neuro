@@ -193,7 +193,7 @@ export const HistoriaDeVida: React.FC<HistoriaDeVidaProps> = ({ patients, curren
                             <label className="block text-[10px] font-bold uppercase text-secondary mb-1">Paciente Alvo</label>
                             <select
                                 value={selectedPatient?.id ?? ''}
-                                onChange={(e) => setSelectedPatient(patients.find(p => p.id === parseInt(e.target.value)) || null)}
+                                onChange={(e) => setSelectedPatient(patients.find(p => p.id === e.target.value) || null)}
                                 className="w-full p-2.5 rounded-lg bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border focus:ring-1 focus:ring-primary outline-none"
                             >
                                 <option value="">Selecione para quem é a história...</option>

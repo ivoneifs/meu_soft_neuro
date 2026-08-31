@@ -4,7 +4,6 @@ import type { Patient, AppliedTest } from '../types';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/Card';
 import { Button } from './ui/Button';
 import { PlusCircle, Edit, Trash2, Mail, Phone, MapPin, Users, GraduationCap, BriefcaseMedical, Save, TestTube2, Search, XCircle, Plus, Table as TableIcon, Sparkles, Loader2, Info, History, Clock } from 'lucide-react';
-import { GoogleGenAI } from "@google/genai";
 
 // Comprehensive subtest definitions for specialized batteries
 const TEST_SUBTESTS: Record<string, string[]> = {
@@ -43,7 +42,7 @@ interface PacientesProps {
   patients: Patient[];
   onAddPatient: (patient: Patient) => void;
   onUpdatePatient: (patient: Patient) => void;
-  onDeletePatient: (id: number) => void;
+  onDeletePatient: (id: string) => void;
 }
 
 const PatientFormModal: React.FC<{
@@ -123,9 +122,9 @@ const PatientDetail: React.FC<{
     patient: Patient | null; 
     onClose: () => void;
     onEdit: (patient: Patient) => void;
-    onDelete: (id: number) => void;
-    onUpdateNotes: (id: number, notes: string) => void;
-    onUpdateTests: (id: number, tests: AppliedTest[]) => void;
+    onDelete: (id: string) => void;
+    onUpdateNotes: (id: string, notes: string) => void;
+    onUpdateTests: (id: string, tests: AppliedTest[]) => void;
 }> = ({ patient, onClose, onEdit, onDelete, onUpdateNotes, onUpdateTests }) => {
     if (!patient) return null;
     
@@ -134,6 +133,7 @@ const PatientDetail: React.FC<{
     const [editedTests, setEditedTests] = useState<AppliedTest[]>([]);
     const [testScores, setTestScores] = useState<Record<number, Record<string, string>>>({});
     const [interpretingIndex, setInterpretingIndex] = useState<number | null>(null);
+    const [testImages, setTestImages] = useState<Record<number, { name: string; mimeType: string; data: string }[]>>({});
 
     useEffect(() => {
         setNotes(patient.notes || '');
@@ -181,6 +181,32 @@ const PatientDetail: React.FC<{
         }
     };
 
+    const readFileAsBase64 = (file: File): Promise<string> => {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+        });
+    };
+
+    const handleTestFileUpload = async (index: number, files: FileList | null) => {
+        if (!files) return;
+        const images = await Promise.all(
+            Array.from(files)
+                .filter((f) => f.type.startsWith('image/'))
+                .map(async (f) => ({ name: f.name, mimeType: f.type, data: await readFileAsBase64(f) }))
+        );
+        setTestImages((prev) => ({ ...prev, [index]: [...(prev[index] || []), ...images] }));
+    };
+
+    const handleRemoveTestImage = (index: number, imageIndex: number) => {
+        setTestImages((prev) => ({
+            ...prev,
+            [index]: (prev[index] || []).filter((_, i) => i !== imageIndex),
+        }));
+    };
+
     const handleInterpretIA = async (index: number) => {
         const test = editedTests[index];
         if (!test.testName || !test.result) {
@@ -190,27 +216,15 @@ const PatientDetail: React.FC<{
 
         setInterpretingIndex(index);
         try {
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
-            const prompt = `
-                Como neuropsicólogo, interprete os dados brutos do teste ${test.testName}.
-                Paciente: ${patient.name} (${patient.birthDate}).
-                DADOS:
-                ${test.result}
-                
-                HISTÓRICO:
-                ${notes}
-
-                Gere um texto clínico rico e conciso. Se houver tempos de reação (TAVIS-4), analise a velocidade psicomotora e variabilidade atencional.
-            `;
-
-            const response = await ai.models.generateContent({
-                model: 'gemini-3-flash-preview',
-                contents: prompt,
-                config: { temperature: 0.3 }
+            const res = await fetch('/api/openai/interpret-test', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ patient, test, notes, images: testImages[index] || [] }),
             });
+            const data = await res.json();
 
             const updatedTests = [...editedTests];
-            const interpretation = response.text || "Sem retorno da IA.";
+            const interpretation = data.text || "Sem retorno da IA.";
             updatedTests[index].result = test.result + "\n\n--- INTERPRETAÇÃO IA ---\n" + interpretation;
             setEditedTests(updatedTests);
         } catch (error) {
@@ -227,17 +241,26 @@ const PatientDetail: React.FC<{
 
     const removeTest = (index: number) => {
         setEditedTests(editedTests.filter((_, i) => i !== index));
+        const reindexed: typeof testImages = {};
+        Object.entries(testImages).forEach(([key, value]) => {
+            const i = Number(key);
+            if (i < index) reindexed[i] = value;
+            else if (i > index) reindexed[i - 1] = value;
+        });
+        setTestImages(reindexed);
     };
 
     const handleSaveTests = () => {
         onUpdateTests(patient.id, editedTests);
         setIsEditingTests(false);
+        setTestImages({});
         alert("Avaliações gravadas no prontuário com sucesso!");
     };
 
     const handleCancelEditTests = () => {
         setEditedTests(patient.appliedTests ? [...patient.appliedTests] : []);
         setIsEditingTests(false);
+        setTestImages({});
     };
 
     const InfoItem: React.FC<{ icon: React.ElementType, label: string, value?: string }> = ({ icon: Icon, label, value }) => (
@@ -328,6 +351,33 @@ const PatientDetail: React.FC<{
                                                         </div>
                                                     </div>
                                                 )}
+
+                                                <div className="space-y-2">
+                                                    <label className="text-[10px] font-bold text-secondary uppercase tracking-wider block">Uploads do Teste (fotos do protocolo aplicado)</label>
+                                                    <input
+                                                        type="file"
+                                                        accept="image/*"
+                                                        multiple
+                                                        onChange={(e) => handleTestFileUpload(index, e.target.files)}
+                                                        className="w-full text-xs text-secondary file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-primary/10 file:text-primary hover:file:bg-primary/20"
+                                                    />
+                                                    {(testImages[index]?.length ?? 0) > 0 && (
+                                                        <div className="flex flex-wrap gap-2 pt-1">
+                                                            {testImages[index].map((img, imgIndex) => (
+                                                                <div key={imgIndex} className="relative group">
+                                                                    <img src={img.data} alt={img.name} className="h-14 w-14 object-cover rounded-lg border border-light-border dark:border-dark-border" />
+                                                                    <button
+                                                                        onClick={() => handleRemoveTestImage(index, imgIndex)}
+                                                                        className="absolute -top-1.5 -right-1.5 bg-red-500 text-white rounded-full h-4 w-4 flex items-center justify-center text-[9px] opacity-0 group-hover:opacity-100 transition-opacity"
+                                                                    >
+                                                                        ×
+                                                                    </button>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                    <p className="text-[9px] text-secondary italic">As imagens são enviadas junto ao clicar em "Interpretar com IA", para leitura direta do protocolo — não ficam salvas no prontuário.</p>
+                                                </div>
 
                                                 <div className="space-y-2">
                                                     <div className="flex justify-between items-center">
@@ -463,21 +513,21 @@ export const Pacientes: React.FC<PacientesProps> = ({ patients, onAddPatient, on
         setEditingPatient(null);
     };
 
-    const handleDeletePatient = (id: number) => {
+    const handleDeletePatient = (id: string) => {
         if (confirm("Deseja realmente excluir este paciente? Esta ação removerá todo o histórico clínico.")) {
             onDeletePatient(id);
             setSelectedPatient(null);
         }
     };
 
-    const handleUpdateNotes = (id: number, notes: string) => {
+    const handleUpdateNotes = (id: string, notes: string) => {
         const p = patients.find(p => p.id === id);
         if (p) {
             onUpdatePatient({ ...p, notes });
         }
     };
 
-    const handleUpdateTests = (id: number, tests: AppliedTest[]) => {
+    const handleUpdateTests = (id: string, tests: AppliedTest[]) => {
         const p = patients.find(p => p.id === id);
         if (p) {
             onUpdatePatient({ ...p, appliedTests: tests });

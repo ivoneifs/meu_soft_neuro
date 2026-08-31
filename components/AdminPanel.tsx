@@ -1,12 +1,13 @@
 
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/Card';
 import { Button } from './ui/Button';
-import { 
-  ShieldCheck, Search, Plus, Minus, Clock, 
-  UserPlus, Trash2, X, Zap, Users as UsersIcon, History, FileText
+import {
+  ShieldCheck, Search, Plus, Minus, Clock,
+  UserPlus, Trash2, X, Zap, Users as UsersIcon, History, FileText, Bot, Upload
 } from 'lucide-react';
 import type { User } from '../types';
+import { api } from '../services/api';
 
 interface AdminPanelProps {
   users: User[];
@@ -14,7 +15,121 @@ interface AdminPanelProps {
   onDeleteUser: (userId: string) => void;
   onCreateUser: (user: User) => void;
   onLogout?: () => void;
+  token: string;
 }
+
+const AI_DOC_TYPE_LABELS: Record<string, string> = {
+  style_model: 'Laudo-modelo (estilo)',
+  knowledge_base: 'Material clínico de apoio',
+};
+
+const AiDocsManager: React.FC<{ token: string }> = ({ token }) => {
+  const [docs, setDocs] = useState<any[]>([]);
+  const [type, setType] = useState('style_model');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      setDocs(await api.listAiDocs(token));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const handleUpload = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    const file = fileInputRef.current?.files?.[0];
+    if (!file) { setError('Selecione um arquivo'); return; }
+    setBusy(true);
+    try {
+      await api.uploadAiDoc(file, type, token);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      await load();
+    } catch (err: any) {
+      setError(err.message || 'Erro ao enviar arquivo');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    setError('');
+    try {
+      await api.deleteAiDoc(id, token);
+      await load();
+    } catch (err: any) {
+      setError(err.message || 'Erro ao excluir');
+    }
+  };
+
+  return (
+    <div className="space-y-6 animate-in fade-in duration-300">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-md flex items-center gap-2"><Bot className="h-5 w-5 text-primary" /> Documentos de Referência da IA</CardTitle>
+          <p className="text-xs text-secondary mt-1">
+            Envie laudos-modelo (estilo/estrutura) e material clínico de apoio (critérios, manuais).
+            Aceita .docx, .pdf, .txt, .xls/.xlsx/.xlsm, .jpg/.jpeg/.png e outros formatos de texto.
+            Usado automaticamente ao gerar laudos com IA.
+          </p>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleUpload} className="flex flex-col sm:flex-row gap-3 items-start sm:items-end">
+            <div className="flex-1 w-full">
+              <label className="block text-[10px] font-bold uppercase text-secondary mb-1">Tipo</label>
+              <select value={type} onChange={(e) => setType(e.target.value)} className="w-full p-2 rounded-lg border dark:bg-dark-bg text-sm">
+                <option value="style_model">Laudo-modelo (estilo)</option>
+                <option value="knowledge_base">Material clínico de apoio</option>
+              </select>
+            </div>
+            <div className="flex-1 w-full">
+              <label className="block text-[10px] font-bold uppercase text-secondary mb-1">Arquivo</label>
+              <input type="file" ref={fileInputRef} accept=".docx,.pdf,.txt,.xls,.xlsx,.xlsm,.jpg,.jpeg,.png,.csv" className="w-full p-1.5 rounded-lg border dark:bg-dark-bg text-sm" required />
+            </div>
+            <Button type="submit" disabled={busy} className="gap-2"><Upload className="h-4 w-4" /> {busy ? 'Enviando...' : 'Enviar'}</Button>
+          </form>
+          {error && <p className="text-red-500 text-sm mt-2">{error}</p>}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle className="text-md">Documentos cadastrados</CardTitle></CardHeader>
+        <CardContent className="p-0">
+          {loading ? (
+            <p className="p-4 text-secondary">Carregando...</p>
+          ) : docs.length === 0 ? (
+            <p className="p-4 text-secondary italic">Nenhum documento enviado ainda.</p>
+          ) : (
+            <table className="w-full text-left">
+              <thead className="bg-light-bg dark:bg-dark-bg/50 text-secondary text-[10px] uppercase font-bold">
+                <tr><th className="p-4">Arquivo</th><th className="p-4">Tipo</th><th className="p-4">Enviado em</th><th className="p-4 text-right">Ações</th></tr>
+              </thead>
+              <tbody className="divide-y divide-light-border dark:divide-dark-border">
+                {docs.map((d) => (
+                  <tr key={d.id}>
+                    <td className="p-4 text-sm">{d.filename}</td>
+                    <td className="p-4 text-sm">{AI_DOC_TYPE_LABELS[d.type] ?? d.type}</td>
+                    <td className="p-4 text-sm text-secondary">{new Date(d.created_at).toLocaleDateString('pt-BR')}</td>
+                    <td className="p-4 text-right">
+                      <button onClick={() => handleDelete(d.id)} className="text-red-400 p-2 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-full transition-colors"><Trash2 className="h-4 w-4" /></button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+};
 
 const CreditManager: React.FC<{ user: User; onUpdate: (val: number) => void }> = ({ user, onUpdate }) => {
   const [isEditing, setIsEditing] = useState(false);
@@ -114,10 +229,10 @@ const CreateUserModal: React.FC<{ isOpen: boolean; onClose: () => void; onSave: 
   );
 };
 
-export const AdminPanel: React.FC<AdminPanelProps> = ({ users, onUpdateUser, onDeleteUser, onCreateUser }) => {
+export const AdminPanel: React.FC<AdminPanelProps> = ({ users, onUpdateUser, onDeleteUser, onCreateUser, token }) => {
   const [search, setSearch] = useState('');
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<'users' | 'history'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'history' | 'ai'>('users');
 
   const filteredUsers = users.filter(u => u.name.toLowerCase().includes(search.toLowerCase()) || u.email.toLowerCase().includes(search.toLowerCase()));
   const pendingUsers = filteredUsers.filter(u => u.status === 'Pendente');
@@ -163,6 +278,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ users, onUpdateUser, onD
             className="gap-2"
           >
             <History className="h-4 w-4" /> Histórico
+          </Button>
+          <Button
+            variant={activeTab === 'ai' ? 'primary' : 'secondary'}
+            onClick={() => setActiveTab('ai')}
+            size="sm"
+            className="gap-2"
+          >
+            <Bot className="h-4 w-4" /> IA
           </Button>
           <Button onClick={() => setIsCreateModalOpen(true)} size="sm" className="gap-2"><UserPlus className="h-4 w-4" /> Novo Usuário</Button>
         </div>
@@ -270,6 +393,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ users, onUpdateUser, onD
             </CardContent>
           </Card>
         </>
+      ) : activeTab === 'ai' ? (
+        <AiDocsManager token={token} />
       ) : (
         <div className="space-y-6 animate-in fade-in duration-300">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

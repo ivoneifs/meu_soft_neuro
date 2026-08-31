@@ -6,9 +6,10 @@ import type { User } from '../types';
 interface ContaProps {
     user: User;
     onUpdateProfile: (updatedUser: Partial<User>) => void;
+    onChangePassword: (currentPassword: string, newPassword: string) => Promise<void>;
 }
 
-export const Conta: React.FC<ContaProps> = ({ user, onUpdateProfile }) => {
+export const Conta: React.FC<ContaProps> = ({ user, onUpdateProfile, onChangePassword }) => {
   const [profileInfo, setProfileInfo] = useState(user);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -56,13 +57,18 @@ export const Conta: React.FC<ContaProps> = ({ user, onUpdateProfile }) => {
       });
   };
 
-  const handlePasswordSave = () => {
+  const handlePasswordSave = async () => {
       if (!passwordInfo.currentPassword || !passwordInfo.newPassword) {
           alert('Por favor, preencha os campos de senha atual e nova senha.');
           return;
       }
-      alert('Senha alterada com sucesso!');
-      setPasswordInfo({ currentPassword: '', newPassword: '' });
+      try {
+          await onChangePassword(passwordInfo.currentPassword, passwordInfo.newPassword);
+          alert('Senha alterada com sucesso!');
+          setPasswordInfo({ currentPassword: '', newPassword: '' });
+      } catch (err: any) {
+          alert(err.message || 'Não foi possível alterar a senha.');
+      }
   };
 
   return (
