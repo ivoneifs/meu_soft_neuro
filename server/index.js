@@ -15,7 +15,8 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 
 const SESSION_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const SUPER_ADMIN_EMAIL = "ivonei.admin@neuro.com";
+const SUPER_ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "ivonei.admin@neuro.com").toLowerCase();
+const SUPER_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "151230";
 
 const API_KEY = process.env.OPENAI_API_KEY;
 if (!API_KEY) console.warn("OPENAI_API_KEY não configurada — chamadas à IA vão falhar.");
@@ -412,11 +413,18 @@ Gere um texto clínico rico e conciso. Se houver tempos de reação (TAVIS-4), a
 // Garante a existência da conta master (mesmas credenciais já usadas antes da migração para banco de dados).
 async function seedSuperAdmin() {
   const exists = await User.findOne({ email: SUPER_ADMIN_EMAIL });
-  if (exists) return;
+  if (exists) {
+    // Mantém o admin sempre ativo e com a senha configurada por ambiente.
+    exists.role = "ADMIN";
+    exists.status = "Ativo";
+    if (process.env.ADMIN_PASSWORD) exists.password_hash = hashPassword(SUPER_ADMIN_PASSWORD);
+    await exists.save();
+    return;
+  }
   await User.create({
     name: "Ivonei - Administrador Mestre",
     email: SUPER_ADMIN_EMAIL,
-    password_hash: hashPassword("151230"),
+    password_hash: hashPassword(SUPER_ADMIN_PASSWORD),
     crp: "MASTER-01",
     title: "Super Usuário / Admin",
     avatar: "https://i.pravatar.cc/150?u=ivonei",
