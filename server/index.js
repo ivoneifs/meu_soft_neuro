@@ -410,6 +410,23 @@ Gere um texto clínico rico e conciso. Se houver tempos de reação (TAVIS-4), a
   }
 });
 
+// Trata erros de upload (multer) e qualquer erro não capturado das rotas para
+// não derrubar o processo. Um "MulterError: File too large" sem handler
+// encerrava o servidor.
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  if (err && err.name === "MulterError") {
+    const msg = err.code === "LIMIT_FILE_SIZE" ? "Arquivo excede o limite de 10 MB" : `Falha no upload: ${err.message}`;
+    return res.status(413).json({ error: msg });
+  }
+  console.error("Erro não tratado:", err?.message || err);
+  res.status(500).json({ error: "Erro interno do servidor" });
+});
+
+// Rede de segurança: loga em vez de encerrar o processo.
+process.on("unhandledRejection", (reason) => console.error("unhandledRejection:", reason));
+process.on("uncaughtException", (err) => console.error("uncaughtException:", err?.message || err));
+
 // Garante a existência da conta master (mesmas credenciais já usadas antes da migração para banco de dados).
 async function seedSuperAdmin() {
   const exists = await User.findOne({ email: SUPER_ADMIN_EMAIL });

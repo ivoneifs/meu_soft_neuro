@@ -1,13 +1,22 @@
 services:
+  mongo:
+    image: mongo:7
+    volumes:
+      - mongo-data:/data/db
+    restart: unless-stopped
+
   api:
     build: ./server
     environment:
-      MONGO_URL: ${MONGO_URL:?defina MONGO_URL no .env}
+      # Por padrão usa o Mongo deste compose; sobrescreva com um Atlas se quiser.
+      MONGO_URL: ${MONGO_URL:-mongodb://mongo:27017/neuro}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
-      ADMIN_EMAIL: ${ADMIN_EMAIL:-}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-ivonei.admin@neuro.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-151230}
       PORT: "3002"
+    depends_on:
+      - mongo
     restart: unless-stopped
 
   web:
@@ -17,3 +26,6 @@ services:
     depends_on:
       - api
     restart: unless-stopped
+
+volumes:
+  mongo-data:
