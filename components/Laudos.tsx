@@ -159,7 +159,7 @@ const ReportGenerator: React.FC<{
                                 <label className="block text-[10px] font-bold uppercase text-secondary mb-1">Paciente</label>
                                 <select
                                     value={selectedPatient?.id ?? ''}
-                                    onChange={(e) => setSelectedPatient(patients.find(p => p.id === parseInt(e.target.value)) || null)}
+                                    onChange={(e) => setSelectedPatient(patients.find(p => p.id === e.target.value) || null)}
                                     className="w-full p-2.5 rounded-lg bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border focus:ring-1 focus:ring-primary outline-none text-sm"
                                 >
                                     <option value="">Selecione um paciente</option>
@@ -203,6 +203,16 @@ const ReportGenerator: React.FC<{
                         </div>
                         
                         <div>
+                            <label className="block text-[10px] font-bold uppercase text-secondary mb-1">Descrição da Demanda</label>
+                            <textarea name="demanda" rows={2} value={reportInputs.demanda} onChange={handleInputChange} className="w-full p-2.5 rounded-lg bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border focus:ring-1 focus:ring-primary outline-none text-sm" placeholder="Motivo do encaminhamento / queixa principal..." />
+                        </div>
+
+                        <div>
+                            <label className="block text-[10px] font-bold uppercase text-secondary mb-1">Procedimentos</label>
+                            <textarea name="procedimentos" rows={2} value={reportInputs.procedimentos} onChange={handleInputChange} className="w-full p-2.5 rounded-lg bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border focus:ring-1 focus:ring-primary outline-none text-sm" placeholder="Entrevista, aplicação de testes, etc..." />
+                        </div>
+
+                        <div>
                             <label className="block text-[10px] font-bold uppercase text-secondary mb-1">Análise de Instrumentos (Observações Manuais)</label>
                             <textarea name="analiseInstrumentos" rows={5} value={reportInputs.analiseInstrumentos} onChange={handleInputChange} className="w-full p-2.5 rounded-lg bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border focus:ring-1 focus:ring-primary outline-none text-sm" placeholder="Descreva observações que não estão nos arquivos..." />
                         </div>
@@ -217,7 +227,12 @@ const ReportGenerator: React.FC<{
                                 <input name="finalidade" type="text" value={reportInputs.finalidade} onChange={handleInputChange} className="w-full p-2.5 rounded-lg bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border focus:ring-1 focus:ring-primary outline-none text-sm" />
                             </div>
                         </div>
-                        
+
+                        <div>
+                            <label className="block text-[10px] font-bold uppercase text-secondary mb-1">Impressão Diagnóstica</label>
+                            <textarea name="impressaoDiagnostica" rows={2} value={reportInputs.impressaoDiagnostica} onChange={handleInputChange} className="w-full p-2.5 rounded-lg bg-light-bg dark:bg-dark-bg border border-light-border dark:border-dark-border focus:ring-1 focus:ring-primary outline-none text-sm" placeholder="Impressão diagnóstica formal (opcional, a IA também pode sugerir)..." />
+                        </div>
+
                         <div className="sticky bottom-0 bg-light-card dark:bg-dark-card py-4 flex flex-col gap-2 border-t mt-4">
                             <Button onClick={handleGenerateReport} isLoading={isLoading} className="w-full py-4 font-bold shadow-lg" disabled={isLimitReached || !selectedPatient}>
                                 <Bot className="mr-2 h-5 w-5"/> {isLoading ? 'A IA está redigindo...' : 'Gerar Laudo Profissional'}

@@ -4,14 +4,16 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/Card';
 import { Button } from './ui/Button';
 import { BrainCircuit, Mail, Lock, User as UserIcon, Clock, MapPin, Phone, CreditCard, Award, Briefcase, Key } from 'lucide-react';
 import type { User } from '../types';
+import { api } from '../services/api';
 
 interface AuthProps {
-  onLogin: (user: User) => void;
+  onLoggedIn: (user: User, token: string) => void;
 }
 
-export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
+export const Auth: React.FC<AuthProps> = ({ onLoggedIn }) => {
   const [isLogin, setIsLogin] = useState(true);
   const [isPendingApproval, setIsPendingApproval] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [regType, setRegType] = useState<'fisica' | 'juridica'>('fisica');
   
   const [formData, setFormData] = useState({
@@ -36,41 +38,34 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
     complement: ''
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    if (isLogin) {
-      onLogin({
-        email: formData.email,
-        password: formData.password,
-      } as User);
-    } else {
-      if (formData.password !== formData.confirmPassword) {
-        alert("As senhas não conferem.");
-        return;
+    setIsSubmitting(true);
+
+    try {
+      if (isLogin) {
+        const { user, token } = await api.login(formData.email, formData.password);
+        onLoggedIn(user, token);
+      } else {
+        if (formData.password !== formData.confirmPassword) {
+          alert("As senhas não conferem.");
+          return;
+        }
+
+        await api.register({
+          name: formData.name,
+          email: formData.email,
+          password: formData.password,
+          title: regType === 'fisica' ? formData.profession : 'Clínica/PJ',
+          crp: formData.crp,
+        } as any);
+
+        setIsPendingApproval(true);
       }
-
-      const isSuperAdmin = formData.email.toLowerCase() === 'ivonei.admin@neuro.com';
-      if (isSuperAdmin) {
-        alert("Este e-mail é reservado para o administrador.");
-        return;
-      }
-
-      const newUser: User = {
-        name: formData.name,
-        email: formData.email,
-        password: formData.password,
-        avatar: `https://picsum.photos/seed/${formData.email}/150`,
-        title: regType === 'fisica' ? formData.profession : 'Clínica/PJ',
-        crp: formData.crp || 'PJ-CONSULTA',
-        role: 'USER',
-        maxReports: 5,
-        usedReports: 0,
-        status: 'Pendente'
-      };
-
-      setIsPendingApproval(true);
-      onLogin(newUser);
+    } catch (err: any) {
+      alert(err.message || 'Ocorreu um erro. Tente novamente.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -171,7 +166,9 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
                       />
                     </div>
                   </div>
-                  <Button type="submit" className="w-full py-2.5 font-bold mt-2">Entrar</Button>
+                  <Button type="submit" className="w-full py-2.5 font-bold mt-2" disabled={isSubmitting}>
+                    {isSubmitting ? 'Entrando...' : 'Entrar'}
+                  </Button>
                 </div>
               ) : (
                 /* Registration Form - Detailed View */
@@ -281,8 +278,8 @@ export const Auth: React.FC<AuthProps> = ({ onLogin }) => {
                         Li e concordo com os <a href="#" className="text-primary underline">Termos de uso e Privacidade</a> da plataforma
                       </label>
                     </div>
-                    <Button type="submit" className="px-6 py-2.5 font-bold bg-[#f39c12] hover:bg-[#e67e22] border-none text-white gap-2 flex items-center">
-                      Cadastrar <Key className="h-4 w-4" />
+                    <Button type="submit" disabled={isSubmitting} className="px-6 py-2.5 font-bold bg-[#f39c12] hover:bg-[#e67e22] border-none text-white gap-2 flex items-center">
+                      {isSubmitting ? 'Enviando...' : 'Cadastrar'} <Key className="h-4 w-4" />
                     </Button>
                   </div>
                 </div>
