@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import { AiDocChunk } from "./models.js";
+import { query } from "./db.js";
 
 const EMBEDDING_MODEL = "text-embedding-3-small";
 const CHUNK_SIZE = 1500;
@@ -48,15 +48,12 @@ export async function embedAndStoreDoc({ docId, type, filename, content }) {
 
   const response = await openai.embeddings.create({ model: EMBEDDING_MODEL, input: chunks });
 
-  await AiDocChunk.insertMany(
-    chunks.map((text, i) => ({
-      doc_id: docId,
-      doc_type: type,
-      filename,
-      text,
-      embedding: response.data[i].embedding,
-    }))
-  );
+  for (let i = 0; i < chunks.length; i++) {
+    await query(
+      "INSERT INTO ai_doc_chunks (doc_id, doc_type, filename, text, embedding) VALUES ($1, $2, $3, $4, $5)",
+      [docId, type, filename, chunks[i], response.data[i].embedding]
+    );
+  }
 }
 
 // Busca os trechos mais relevantes (por similaridade de cosseno) para o texto de consulta —
@@ -65,7 +62,7 @@ export async function retrieveRelevantContext(queryText) {
   const openai = getClient();
   if (!openai) return "";
 
-  const allChunks = await AiDocChunk.find();
+  const { rows: allChunks } = await query("SELECT doc_type, filename, text, embedding FROM ai_doc_chunks");
   if (allChunks.length === 0) return "";
 
   const queryEmbeddingResp = await openai.embeddings.create({ model: EMBEDDING_MODEL, input: queryText });
@@ -96,5 +93,5 @@ export async function retrieveRelevantContext(queryText) {
 }
 
 export async function deleteDocChunks(docId) {
-  await AiDocChunk.deleteMany({ doc_id: docId });
+  await query("DELETE FROM ai_doc_chunks WHERE doc_id = $1", [docId]);
 }

@@ -1,22 +1,26 @@
 services:
-  mongo:
-    image: mongo:7
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: soft_neuro
+      POSTGRES_PASSWORD: soft_neuro
+      POSTGRES_DB: soft_neuro
     volumes:
-      - mongo-data:/data/db
+      - pg-data:/var/lib/postgresql/data
     restart: unless-stopped
 
   api:
     build: ./server
     environment:
-      # Por padrão usa o Mongo deste compose; sobrescreva com um Atlas se quiser.
-      MONGO_URL: ${MONGO_URL:-mongodb://mongo:27017/neuro}
+      # Por padrão usa o Postgres deste compose; em produção aponta para o Postgres do Coolify.
+      DATABASE_URL: ${DATABASE_URL:-postgres://soft_neuro:soft_neuro@postgres:5432/soft_neuro}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-ivonei.admin@neuro.com}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-151230}
       PORT: "3002"
     depends_on:
-      - mongo
+      - postgres
     restart: unless-stopped
 
   web:
@@ -28,4 +32,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  mongo-data:
+  pg-data:

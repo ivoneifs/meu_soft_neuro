@@ -2,8 +2,8 @@ import express from "express";
 import cors from "cors";
 import multer from "multer";
 import OpenAI from "openai";
-import { connectDb } from "./db.js";
-import { User, Session, Patient, AiReferenceDoc } from "./models.js";
+import { connectDb, query } from "./db.js";
+import { userJson, patientJson, patientData, findUserByEmail, findUserById, createUser, updateUser } from "./models.js";
 import { hashPassword, verifyPassword, generateToken } from "./crypto.js";
 import { extractText } from "./extractText.js";
 import { embedAndStoreDoc, deleteDocChunks, retrieveRelevantContext } from "./ragRetrieval.js";
@@ -35,16 +35,18 @@ function getAge(birthDate) {
 async function createSession(userId) {
   const token = generateToken();
   const expires_at = new Date(Date.now() + SESSION_DURATION_MS).toISOString();
-  await Session.create({ token, user_id: userId, expires_at });
+  await query("INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)", [token, userId, expires_at]);
   return token;
 }
 
 async function getUserFromRequest(req) {
   const token = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
   if (!token) return null;
-  const session = await Session.findOne({ token });
-  if (!session || new Date(session.expires_at) < new Date()) return null;
-  return User.findById(session.user_id);
+  const { rows } = await query(
+    "SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = $1 AND s.expires_at > now()",
+    [token]
+  );
+  return rows[0] || null;
 }
 
 async function requireAuth(req, res, next) {
@@ -72,11 +74,11 @@ app.post("/api/auth/register", async (req, res) => {
     return res.status(400).json({ error: "Este e-mail é reservado para o administrador" });
   }
 
-  const existing = await User.findOne({ email: email.toLowerCase() });
+  const existing = await findUserByEmail(email.toLowerCase());
   if (existing) return res.status(409).json({ error: "E-mail já cadastrado" });
 
   const password_hash = hashPassword(password);
-  await User.create({
+  await createUser({
     name,
     email: email.toLowerCase(),
     password_hash,
@@ -96,7 +98,7 @@ app.post("/api/auth/login", async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: "E-mail e senha são obrigatórios" });
 
-  const user = await User.findOne({ email: email.toLowerCase() });
+  const user = await findUserByEmail(email.toLowerCase());
   if (!user || !verifyPassword(password, user.password_hash)) {
     return res.status(401).json({ error: "E-mail ou senha inválidos" });
   }
@@ -104,25 +106,27 @@ app.post("/api/auth/login", async (req, res) => {
   if (user.status === "Pendente") return res.status(403).json({ error: "Sua conta aguarda aprovação do administrador." });
 
   const token = await createSession(user.id);
-  res.json({ user, token });
+  res.json({ user: userJson(user), token });
 });
 
 app.post("/api/auth/logout", requireAuth, async (req, res) => {
   const token = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
-  await Session.deleteOne({ token });
+  await query("DELETE FROM sessions WHERE token = $1", [token]);
   res.json({ ok: true });
 });
 
-app.get("/api/auth/me", requireAuth, (req, res) => res.json({ user: req.user }));
+app.get("/api/auth/me", requireAuth, (req, res) => res.json({ user: userJson(req.user) }));
 
 app.put("/api/auth/profile", requireAuth, async (req, res) => {
   const { name, email, crp, avatar } = req.body;
-  if (name) req.user.name = name;
-  if (email && EMAIL_RE.test(email)) req.user.email = email.toLowerCase();
-  if (crp !== undefined) req.user.crp = crp;
-  if (avatar) req.user.avatar = avatar;
-  await req.user.save();
-  res.json({ user: req.user });
+  const fields = { crp };
+  if (name) fields.name = name;
+  if (email && EMAIL_RE.test(email)) fields.email = email.toLowerCase();
+  if (avatar) fields.avatar = avatar;
+  if (fields.email && fields.email !== req.user.email && (await findUserByEmail(fields.email))) {
+    return res.status(409).json({ error: "E-mail já cadastrado" });
+  }
+  res.json({ user: userJson(await updateUser(req.user.id, fields)) });
 });
 
 app.put("/api/auth/password", requireAuth, async (req, res) => {
@@ -133,21 +137,20 @@ app.put("/api/auth/password", requireAuth, async (req, res) => {
   }
   if (newPassword.length < 6) return res.status(400).json({ error: "Nova senha deve ter ao menos 6 caracteres" });
 
-  req.user.password_hash = hashPassword(newPassword);
-  await req.user.save();
+  await updateUser(req.user.id, { password_hash: hashPassword(newPassword) });
   res.json({ ok: true });
 });
 
 app.post("/api/auth/increment-usage", requireAuth, async (req, res) => {
-  req.user.usedReports = (req.user.usedReports || 0) + 1;
-  await req.user.save();
-  res.json({ user: req.user });
+  const { rows } = await query("UPDATE users SET used_reports = used_reports + 1 WHERE id = $1 RETURNING *", [req.user.id]);
+  res.json({ user: userJson(rows[0]) });
 });
 
 // --- Usuários (admin) ---
 
 app.get("/api/users", requireAuth, requireAdmin, async (req, res) => {
-  res.json(await User.find().sort({ name: 1 }));
+  const { rows } = await query("SELECT * FROM users ORDER BY name");
+  res.json(rows.map(userJson));
 });
 
 app.post("/api/users", requireAuth, requireAdmin, async (req, res) => {
@@ -156,10 +159,10 @@ app.post("/api/users", requireAuth, requireAdmin, async (req, res) => {
   if (!email || !EMAIL_RE.test(email)) return res.status(400).json({ error: "E-mail inválido" });
   if (!password || password.length < 6) return res.status(400).json({ error: "Senha deve ter ao menos 6 caracteres" });
 
-  const existing = await User.findOne({ email: email.toLowerCase() });
+  const existing = await findUserByEmail(email.toLowerCase());
   if (existing) return res.status(409).json({ error: "E-mail já cadastrado" });
 
-  const created = await User.create({
+  const created = await createUser({
     name,
     email: email.toLowerCase(),
     password_hash: hashPassword(password),
@@ -172,34 +175,34 @@ app.post("/api/users", requireAuth, requireAdmin, async (req, res) => {
     status: "Ativo",
   });
 
-  res.status(201).json(created);
+  res.status(201).json(userJson(created));
 });
 
 app.put("/api/users/:id", requireAuth, requireAdmin, async (req, res) => {
-  const user = await User.findById(req.params.id).catch(() => null);
+  const user = await findUserById(req.params.id);
   if (!user) return res.status(404).json({ error: "Usuário não encontrado" });
 
   const { name, email, crp, role, maxReports, usedReports, status } = req.body;
-  if (name !== undefined) user.name = name;
-  if (email !== undefined) user.email = email.toLowerCase();
-  if (crp !== undefined) user.crp = crp;
-  if (role !== undefined) user.role = role;
-  if (maxReports !== undefined) user.maxReports = maxReports;
-  if (usedReports !== undefined) user.usedReports = usedReports;
-  if (status !== undefined) user.status = status;
-  await user.save();
+  const updated = await updateUser(user.id, {
+    name,
+    email: email !== undefined ? email.toLowerCase() : undefined,
+    crp,
+    role,
+    maxReports,
+    usedReports,
+    status,
+  });
 
-  res.json(user);
+  res.json(userJson(updated));
 });
 
 app.delete("/api/users/:id", requireAuth, requireAdmin, async (req, res) => {
-  const user = await User.findById(req.params.id).catch(() => null);
+  const user = await findUserById(req.params.id);
   if (!user) return res.status(404).json({ error: "Usuário não encontrado" });
   if (user.email === SUPER_ADMIN_EMAIL) return res.status(400).json({ error: "Não é possível excluir o administrador mestre" });
 
-  await Session.deleteMany({ user_id: user.id });
-  await Patient.deleteMany({ userId: user.id });
-  await User.deleteOne({ _id: user.id });
+  // Sessões e pacientes saem junto (ON DELETE CASCADE).
+  await query("DELETE FROM users WHERE id = $1", [user.id]);
   res.json({ ok: true });
 });
 
@@ -208,7 +211,8 @@ app.delete("/api/users/:id", requireAuth, requireAdmin, async (req, res) => {
 const AI_DOC_TYPES = ["style_model", "knowledge_base"];
 
 app.get("/api/ai-docs", requireAuth, requireAdmin, async (req, res) => {
-  res.json(await AiReferenceDoc.find().select("type filename created_at").sort({ created_at: -1 }));
+  const { rows } = await query("SELECT id, type, filename, created_at FROM ai_reference_docs ORDER BY created_at DESC");
+  res.json(rows);
 });
 
 app.post("/api/ai-docs", requireAuth, requireAdmin, upload.single("file"), async (req, res) => {
@@ -227,17 +231,16 @@ app.post("/api/ai-docs", requireAuth, requireAdmin, upload.single("file"), async
     return res.status(400).json({ error: "Não foi possível extrair texto do arquivo" });
   }
 
-  const created = await AiReferenceDoc.create({
-    type: req.body.type,
-    filename: req.file.originalname,
-    content,
-    uploaded_by_user_id: req.user.id,
-  });
+  const { rows } = await query(
+    "INSERT INTO ai_reference_docs (type, filename, content, uploaded_by_user_id) VALUES ($1, $2, $3, $4) RETURNING id, type, filename, created_at",
+    [req.body.type, req.file.originalname, content, req.user.id]
+  );
+  const created = rows[0];
 
   try {
     await embedAndStoreDoc({ docId: created.id, type: created.type, filename: created.filename, content });
   } catch (err) {
-    await AiReferenceDoc.deleteOne({ _id: created.id });
+    await query("DELETE FROM ai_reference_docs WHERE id = $1", [created.id]);
     return res.status(500).json({ error: `Documento não pôde ser indexado: ${err.message}` });
   }
 
@@ -245,51 +248,59 @@ app.post("/api/ai-docs", requireAuth, requireAdmin, upload.single("file"), async
 });
 
 app.delete("/api/ai-docs/:id", requireAuth, requireAdmin, async (req, res) => {
-  const existing = await AiReferenceDoc.findById(req.params.id).catch(() => null);
-  if (!existing) return res.status(404).json({ error: "Documento não encontrado" });
-  await deleteDocChunks(existing.id);
-  await AiReferenceDoc.deleteOne({ _id: req.params.id });
+  const { rows } = await query("SELECT id FROM ai_reference_docs WHERE id = $1", [req.params.id]);
+  if (!rows.length) return res.status(404).json({ error: "Documento não encontrado" });
+  await deleteDocChunks(rows[0].id);
+  await query("DELETE FROM ai_reference_docs WHERE id = $1", [rows[0].id]);
   res.json({ ok: true });
 });
 
 // --- Pacientes ---
 
+async function findPatient(id) {
+  const { rows } = await query("SELECT * FROM patients WHERE id = $1", [id]);
+  return rows[0] || null;
+}
+
 app.get("/api/patients", requireAuth, async (req, res) => {
-  const filter = req.user.role === "ADMIN" ? {} : { userId: req.user.id };
-  res.json(await Patient.find(filter).sort({ _id: -1 }));
+  const { rows } =
+    req.user.role === "ADMIN"
+      ? await query("SELECT * FROM patients ORDER BY created_at DESC")
+      : await query("SELECT * FROM patients WHERE user_id = $1 ORDER BY created_at DESC", [req.user.id]);
+  res.json(rows.map(patientJson));
 });
 
 app.post("/api/patients", requireAuth, async (req, res) => {
-  const patient = await Patient.create({
-    ...req.body,
-    id: undefined,
-    userId: req.user.id,
+  const data = {
+    ...patientData(req.body),
     avatar: req.body.avatar || `https://picsum.photos/seed/${Date.now()}/200`,
     appliedTests: req.body.appliedTests || [],
-  });
-  res.status(201).json(patient);
+  };
+  const { rows } = await query("INSERT INTO patients (user_id, data) VALUES ($1, $2) RETURNING *", [req.user.id, data]);
+  res.status(201).json(patientJson(rows[0]));
 });
 
 app.put("/api/patients/:id", requireAuth, async (req, res) => {
-  const patient = await Patient.findById(req.params.id).catch(() => null);
+  const patient = await findPatient(req.params.id);
   if (!patient) return res.status(404).json({ error: "Paciente não encontrado" });
-  if (req.user.role !== "ADMIN" && String(patient.userId) !== String(req.user.id)) {
+  if (req.user.role !== "ADMIN" && patient.user_id !== req.user.id) {
     return res.status(403).json({ error: "Acesso negado" });
   }
 
-  const { id, userId, ...updates } = req.body;
-  Object.assign(patient, updates);
-  await patient.save();
-  res.json(patient);
+  const { rows } = await query("UPDATE patients SET data = data || $2 WHERE id = $1 RETURNING *", [
+    patient.id,
+    patientData(req.body),
+  ]);
+  res.json(patientJson(rows[0]));
 });
 
 app.delete("/api/patients/:id", requireAuth, async (req, res) => {
-  const patient = await Patient.findById(req.params.id).catch(() => null);
+  const patient = await findPatient(req.params.id);
   if (!patient) return res.status(404).json({ error: "Paciente não encontrado" });
-  if (req.user.role !== "ADMIN" && String(patient.userId) !== String(req.user.id)) {
+  if (req.user.role !== "ADMIN" && patient.user_id !== req.user.id) {
     return res.status(403).json({ error: "Acesso negado" });
   }
-  await Patient.deleteOne({ _id: patient.id });
+  await query("DELETE FROM patients WHERE id = $1", [patient.id]);
   res.json({ ok: true });
 });
 
@@ -429,16 +440,17 @@ process.on("uncaughtException", (err) => console.error("uncaughtException:", err
 
 // Garante a existência da conta master (mesmas credenciais já usadas antes da migração para banco de dados).
 async function seedSuperAdmin() {
-  const exists = await User.findOne({ email: SUPER_ADMIN_EMAIL });
+  const exists = await findUserByEmail(SUPER_ADMIN_EMAIL);
   if (exists) {
     // Mantém o admin sempre ativo e com a senha configurada por ambiente.
-    exists.role = "ADMIN";
-    exists.status = "Ativo";
-    if (process.env.ADMIN_PASSWORD) exists.password_hash = hashPassword(SUPER_ADMIN_PASSWORD);
-    await exists.save();
+    await updateUser(exists.id, {
+      role: "ADMIN",
+      status: "Ativo",
+      password_hash: process.env.ADMIN_PASSWORD ? hashPassword(SUPER_ADMIN_PASSWORD) : undefined,
+    });
     return;
   }
-  await User.create({
+  await createUser({
     name: "Ivonei - Administrador Mestre",
     email: SUPER_ADMIN_EMAIL,
     password_hash: hashPassword(SUPER_ADMIN_PASSWORD),
